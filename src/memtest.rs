@@ -1,5 +1,5 @@
 use {
-    crate::{prelude::*, TimeoutChecker},
+    crate::prelude::*,
     rand::random,
     serde::{Deserialize, Deserializer, Serialize, Serializer},
     std::{error::Error, fmt},
@@ -33,9 +33,15 @@ pub enum MemtestFailure {
     },
 }
 
+pub trait TestObserver {
+    type Error: Error;
+    fn init(&mut self, expected_iter: u64);
+    fn check(&mut self) -> Result<(), Self::Error>;
+}
+
 #[derive(Debug, Serialize, Deserialize)]
-pub enum MemtestError {
-    Timeout,
+pub enum MemtestError<E: Error> {
+    Observer(E),
     #[serde(
         serialize_with = "serialize_memtest_error_other",
         deserialize_with = "deserialize_memtest_error_other"
@@ -92,23 +98,23 @@ pub struct ParseMemtestKindError;
 /// Write the address of each memory location to itself, then read back the value and check that it
 /// matches the expected address.
 #[tracing::instrument(skip_all)]
-pub fn test_own_address_basic(
+pub fn test_own_address_basic<O: TestObserver>(
     memory: &mut [usize],
-    mut timeout_checker: TimeoutChecker,
-) -> Result<MemtestOutcome, MemtestError> {
+    mut observer: O,
+) -> Result<MemtestOutcome, MemtestError<O::Error>> {
     let expected_iter = u64::try_from(memory.len())
         .ok()
         .and_then(|count| count.checked_mul(2))
         .context("Total number of iterations overflowed")?;
-    timeout_checker.init(expected_iter);
+    observer.init(expected_iter);
 
     for mem_ref in memory.iter_mut() {
-        timeout_checker.check()?;
+        observer.check().map_err(|e| MemtestError::Observer(e))?;
         write_volatile_safe(mem_ref, address_from_ref(mem_ref));
     }
 
     for mem_ref in memory.iter() {
-        timeout_checker.check()?;
+        observer.check().map_err(|e| MemtestError::Observer(e))?;
         let address = address_from_ref(mem_ref);
         let actual = read_volatile_safe(mem_ref);
 
@@ -129,16 +135,16 @@ pub fn test_own_address_basic(
 /// value and check that it matches the expected address.
 /// This procedure is repeated 16 times.
 #[tracing::instrument(skip_all)]
-pub fn test_own_address_repeat(
+pub fn test_own_address_repeat<O: TestObserver>(
     memory: &mut [usize],
-    mut timeout_checker: TimeoutChecker,
-) -> Result<MemtestOutcome, MemtestError> {
+    mut observer: O,
+) -> Result<MemtestOutcome, MemtestError<O::Error>> {
     const NUM_RUNS: u64 = 16;
     let expected_iter = u64::try_from(memory.len())
         .ok()
         .and_then(|count| count.checked_mul(2 * NUM_RUNS))
         .context("Total number of iterations overflowed")?;
-    timeout_checker.init(expected_iter);
+    observer.init(expected_iter);
 
     let val_to_write = |address: usize, i, j| {
         if (i + j) % 2 == 0 {
@@ -150,13 +156,13 @@ pub fn test_own_address_repeat(
 
     for i in 0..usize::try_from(NUM_RUNS).unwrap() {
         for (j, mem_ref) in memory.iter_mut().enumerate() {
-            timeout_checker.check()?;
+            observer.check().map_err(|e| MemtestError::Observer(e))?;
             let val = val_to_write(address_from_ref(mem_ref), i, j);
             write_volatile_safe(mem_ref, val);
         }
 
         for (j, mem_ref) in memory.iter().enumerate() {
-            timeout_checker.check()?;
+            observer.check().map_err(|e| MemtestError::Observer(e))?;
             let address = address_from_ref(mem_ref);
             let expected = val_to_write(address, i, j);
             let actual = read_volatile_safe(mem_ref);
@@ -178,34 +184,34 @@ pub fn test_own_address_repeat(
 /// Split given memory into two halves and iterate through memory locations in pairs. For each
 /// pair, write a random value. After all locations are written, read and compare the two halves.
 #[tracing::instrument(skip_all)]
-pub fn test_random_val(
+pub fn test_random_val<O: TestObserver>(
     memory: &mut [usize],
-    mut timeout_checker: TimeoutChecker,
-) -> Result<MemtestOutcome, MemtestError> {
+    mut observer: O,
+) -> Result<MemtestOutcome, MemtestError<O::Error>> {
     let (first_half, second_half) = split_slice_in_half(memory)?;
     let expected_iter =
         u64::try_from(first_half.len() * 2).context("Total number of iterations overflowed")?;
-    timeout_checker.init(expected_iter);
+    observer.init(expected_iter);
 
     for (first_ref, second_ref) in first_half.iter_mut().zip(second_half.iter_mut()) {
-        timeout_checker.check()?;
+        observer.check().map_err(|e| MemtestError::Observer(e))?;
         let val = random();
         write_volatile_safe(first_ref, val);
         write_volatile_safe(second_ref, val);
     }
 
-    compare_regions(first_half, second_half, &mut timeout_checker)
+    compare_regions(first_half, second_half, &mut observer)
 }
 
 /// Reset all bits in given memory to 1s. Split given memory into two halves and iterate through
 /// memory locations in pairs. For each pair, write the XOR result of a random value and the value
 /// read from the location. After all locations are written, read and compare the two halves.
 #[tracing::instrument(skip_all)]
-pub fn test_xor(
+pub fn test_xor<O: TestObserver>(
     memory: &mut [usize],
-    timeout_checker: TimeoutChecker,
-) -> Result<MemtestOutcome, MemtestError> {
-    test_two_regions(memory, timeout_checker, std::ops::BitXor::bitxor)
+    observer: O,
+) -> Result<MemtestOutcome, MemtestError<O::Error>> {
+    test_two_regions(memory, observer, std::ops::BitXor::bitxor)
 }
 
 /// Reset all bits in given memory to 1s. Split given memory into two halves and iterate through
@@ -213,11 +219,11 @@ pub fn test_xor(
 /// the value read from the location. After all locations are written, read and compare the two
 /// halves.
 #[tracing::instrument(skip_all)]
-pub fn test_sub(
+pub fn test_sub<O: TestObserver>(
     memory: &mut [usize],
-    timeout_checker: TimeoutChecker,
-) -> Result<MemtestOutcome, MemtestError> {
-    test_two_regions(memory, timeout_checker, usize::wrapping_sub)
+    observer: O,
+) -> Result<MemtestOutcome, MemtestError<O::Error>> {
+    test_two_regions(memory, observer, usize::wrapping_sub)
 }
 
 /// Reset all bits in given memory to 1s. Split given memory into two halves and iterate through
@@ -225,46 +231,44 @@ pub fn test_sub(
 /// the value read from the location. After all locations are written, read and compare the two
 /// halves.
 #[tracing::instrument(skip_all)]
-pub fn test_mul(
+pub fn test_mul<O: TestObserver>(
     memory: &mut [usize],
-    timeout_checker: TimeoutChecker,
-) -> Result<MemtestOutcome, MemtestError> {
-    test_two_regions(memory, timeout_checker, usize::wrapping_mul)
+    observer: O,
+) -> Result<MemtestOutcome, MemtestError<O::Error>> {
+    test_two_regions(memory, observer, usize::wrapping_mul)
 }
 
 /// Reset all bits in given memory to 1s. Split given memory into two halves and iterate through
 /// memory locations in pairs. For each pair, write the result of dividing the value read from the
 /// location with a random value. After all locations are written, read and compare the two halves.
 #[tracing::instrument(skip_all)]
-pub fn test_div(
+pub fn test_div<O: TestObserver>(
     memory: &mut [usize],
-    timeout_checker: TimeoutChecker,
-) -> Result<MemtestOutcome, MemtestError> {
-    test_two_regions(memory, timeout_checker, |n, d| {
-        n.wrapping_div(usize::max(d, 1))
-    })
+    observer: O,
+) -> Result<MemtestOutcome, MemtestError<O::Error>> {
+    test_two_regions(memory, observer, |n, d| n.wrapping_div(usize::max(d, 1)))
 }
 
 /// Reset all bits in given memory to 1s. Split given memory into two halves and iterate through
 /// memory locations in pairs. For each pair, write the OR result of a random value and the value
 /// read from the location. After all locations are written, read and compare the two halves.
 #[tracing::instrument(skip_all)]
-pub fn test_or(
+pub fn test_or<O: TestObserver>(
     memory: &mut [usize],
-    timeout_checker: TimeoutChecker,
-) -> Result<MemtestOutcome, MemtestError> {
-    test_two_regions(memory, timeout_checker, std::ops::BitOr::bitor)
+    observer: O,
+) -> Result<MemtestOutcome, MemtestError<O::Error>> {
+    test_two_regions(memory, observer, std::ops::BitOr::bitor)
 }
 
 /// Reset all bits in given memory to 1s. Split given memory into two halves and iterate through
 /// memory locations in pairs. For each pair, write the AND result of a random value and the value
 /// read from the location. After all locations are written, read and compare the two halves.
 #[tracing::instrument(skip_all)]
-pub fn test_and(
+pub fn test_and<O: TestObserver>(
     memory: &mut [usize],
-    timeout_checker: TimeoutChecker,
-) -> Result<MemtestOutcome, MemtestError> {
-    test_two_regions(memory, timeout_checker, std::ops::BitAnd::bitand)
+    observer: O,
+) -> Result<MemtestOutcome, MemtestError<O::Error>> {
+    test_two_regions(memory, observer, std::ops::BitAnd::bitand)
 }
 
 /// Base function for `test_xor`, `test_sub`, `test_mul`, `test_div`, `test_or` and `test_and`
@@ -272,19 +276,19 @@ pub fn test_and(
 /// Reset all bits in given memory to 1s. Split given memory into two halves and iterate through
 /// memory locations in pairs. Write to each pair using the given `write_val` function. After all
 /// locations are written, read and compare the two halves.
-fn test_two_regions(
+fn test_two_regions<O: TestObserver>(
     memory: &mut [usize],
-    mut timeout_checker: TimeoutChecker,
+    mut observer: O,
     transform_fn: fn(usize, usize) -> usize,
-) -> Result<MemtestOutcome, MemtestError> {
+) -> Result<MemtestOutcome, MemtestError<O::Error>> {
     mem_reset(memory);
     let (first_half, second_half) = split_slice_in_half(memory)?;
     let expected_iter =
         u64::try_from(first_half.len() * 2).context("Total number of iterations overflowed")?;
-    timeout_checker.init(expected_iter);
+    observer.init(expected_iter);
 
     for (first_ref, second_ref) in first_half.iter_mut().zip(second_half.iter_mut()) {
-        timeout_checker.check()?;
+        observer.check().map_err(|e| MemtestError::Observer(e))?;
 
         let mixing_val = random();
 
@@ -297,31 +301,31 @@ fn test_two_regions(
         write_volatile_safe(second_ref, new_val);
     }
 
-    compare_regions(first_half, second_half, &mut timeout_checker)
+    compare_regions(first_half, second_half, &mut observer)
 }
 
 /// Split given memory into two halves and iterate through memory locations in pairs. Generate a
 /// random value at the start. For each pair, write the result of adding the random value and the
 /// index of iteration. After all locations are written, read and compare the two halves.
 #[tracing::instrument(skip_all)]
-pub fn test_seq_inc(
+pub fn test_seq_inc<O: TestObserver>(
     memory: &mut [usize],
-    mut timeout_checker: TimeoutChecker,
-) -> Result<MemtestOutcome, MemtestError> {
+    mut observer: O,
+) -> Result<MemtestOutcome, MemtestError<O::Error>> {
     let (first_half, second_half) = split_slice_in_half(memory)?;
     let expected_iter =
         u64::try_from(first_half.len() * 2).context("Total number of iterations overflowed")?;
-    timeout_checker.init(expected_iter);
+    observer.init(expected_iter);
 
     let mut val: usize = random();
     for (first_ref, second_ref) in first_half.iter_mut().zip(second_half.iter_mut()) {
-        timeout_checker.check()?;
+        observer.check().map_err(|e| MemtestError::Observer(e))?;
         val = val.wrapping_add(1);
         write_volatile_safe(first_ref, val);
         write_volatile_safe(second_ref, val);
     }
 
-    compare_regions(first_half, second_half, &mut timeout_checker)
+    compare_regions(first_half, second_half, &mut observer)
 }
 
 /// Split given memory into two halves and iterate through memory locations in pairs. For each
@@ -329,17 +333,17 @@ pub fn test_seq_inc(
 /// After all locations are written, read and compare the two halves.
 /// This procedure is repeated 64 times.
 #[tracing::instrument(skip_all)]
-pub fn test_solid_bits(
+pub fn test_solid_bits<O: TestObserver>(
     memory: &mut [usize],
-    mut timeout_checker: TimeoutChecker,
-) -> Result<MemtestOutcome, MemtestError> {
+    mut observer: O,
+) -> Result<MemtestOutcome, MemtestError<O::Error>> {
     const NUM_RUNS: u64 = 64;
     let (first_half, second_half) = split_slice_in_half(memory)?;
     let expected_iter = u64::try_from(first_half.len() * 2)
         .ok()
         .and_then(|count| count.checked_mul(NUM_RUNS))
         .context("Total number of iterations overflowed")?;
-    timeout_checker.init(expected_iter);
+    observer.init(expected_iter);
 
     let mut solid_bits = !0;
     for _ in 0..NUM_RUNS {
@@ -347,14 +351,14 @@ pub fn test_solid_bits(
         let mut val = solid_bits;
 
         for (first_ref, second_ref) in first_half.iter_mut().zip(second_half.iter_mut()) {
-            timeout_checker.check()?;
+            observer.check().map_err(|e| MemtestError::Observer(e))?;
             val = !val;
             write_volatile_safe(first_ref, val);
             write_volatile_safe(second_ref, val);
         }
 
         if let MemtestOutcome::Fail(failure) =
-            compare_regions(first_half, second_half, &mut timeout_checker)?
+            compare_regions(first_half, second_half, &mut observer)?
         {
             return Ok(MemtestOutcome::Fail(failure));
         }
@@ -368,17 +372,17 @@ pub fn test_solid_bits(
 /// halves.
 /// This procedure is repeated 64 times.
 #[tracing::instrument(skip_all)]
-pub fn test_checkerboard(
+pub fn test_checkerboard<O: TestObserver>(
     memory: &mut [usize],
-    mut timeout_checker: TimeoutChecker,
-) -> Result<MemtestOutcome, MemtestError> {
+    mut observer: O,
+) -> Result<MemtestOutcome, MemtestError<O::Error>> {
     const NUM_RUNS: u64 = 64;
     let (first_half, second_half) = split_slice_in_half(memory)?;
     let expected_iter = u64::try_from(first_half.len() * 2)
         .ok()
         .and_then(|count| count.checked_mul(NUM_RUNS))
         .context("Total number of iterations overflowed")?;
-    timeout_checker.init(expected_iter);
+    observer.init(expected_iter);
 
     let mut checker_board = usize_filled_from_byte(0xaa);
 
@@ -387,14 +391,14 @@ pub fn test_checkerboard(
         let mut val = checker_board;
 
         for (first_ref, second_ref) in first_half.iter_mut().zip(second_half.iter_mut()) {
-            timeout_checker.check()?;
+            observer.check().map_err(|e| MemtestError::Observer(e))?;
             val = !val;
             write_volatile_safe(first_ref, val);
             write_volatile_safe(second_ref, val);
         }
 
         if let MemtestOutcome::Fail(failure) =
-            compare_regions(first_half, second_half, &mut timeout_checker)?
+            compare_regions(first_half, second_half, &mut observer)?
         {
             return Ok(MemtestOutcome::Fail(failure));
         }
@@ -407,29 +411,29 @@ pub fn test_checkerboard(
 /// halves.
 /// This procedure is repeated 256 times, with i corresponding to the iteration number 0-255.
 #[tracing::instrument(skip_all)]
-pub fn test_block_seq(
+pub fn test_block_seq<O: TestObserver>(
     memory: &mut [usize],
-    mut timeout_checker: TimeoutChecker,
-) -> Result<MemtestOutcome, MemtestError> {
+    mut observer: O,
+) -> Result<MemtestOutcome, MemtestError<O::Error>> {
     const NUM_RUNS: u64 = 256;
     let (first_half, second_half) = split_slice_in_half(memory)?;
     let expected_iter = u64::try_from(first_half.len() * 2)
         .ok()
         .and_then(|count| count.checked_mul(NUM_RUNS))
         .context("Total number of iterations overflowed")?;
-    timeout_checker.init(expected_iter);
+    observer.init(expected_iter);
 
     for i in 0..=(u8::try_from(NUM_RUNS - 1).unwrap()) {
         let val = usize_filled_from_byte(i);
 
         for (first_ref, second_ref) in first_half.iter_mut().zip(second_half.iter_mut()) {
-            timeout_checker.check()?;
+            observer.check().map_err(|e| MemtestError::Observer(e))?;
             write_volatile_safe(first_ref, val);
             write_volatile_safe(second_ref, val);
         }
 
         if let MemtestOutcome::Fail(failure) =
-            compare_regions(first_half, second_half, &mut timeout_checker)?
+            compare_regions(first_half, second_half, &mut observer)?
         {
             return Ok(MemtestOutcome::Fail(failure));
         }
@@ -470,13 +474,13 @@ fn usize_filled_from_byte(byte: u8) -> usize {
     val
 }
 
-fn compare_regions(
+fn compare_regions<O: TestObserver>(
     region1: &mut [usize],
     region2: &mut [usize],
-    timeout_checker: &mut TimeoutChecker,
-) -> Result<MemtestOutcome, MemtestError> {
+    observer: &mut O,
+) -> Result<MemtestOutcome, MemtestError<O::Error>> {
     for (ref1, ref2) in region1.iter().zip(region2.iter()) {
-        timeout_checker.check()?;
+        observer.check().map_err(|e| MemtestError::Observer(e))?;
 
         let address1 = address_from_ref(ref1);
         let address2 = address_from_ref(ref2);
@@ -510,23 +514,23 @@ impl fmt::Display for MemtestOutcome {
     }
 }
 
-impl fmt::Display for MemtestError {
+impl<E: Error> fmt::Display for MemtestError<E> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "Error: {:?}", self)
     }
 }
 
-impl Error for MemtestError {
+impl<E: Error> Error for MemtestError<E> {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            MemtestError::Timeout => None,
+            MemtestError::Observer(_) => None,
             MemtestError::Other(err) => Some(err.as_ref()),
         }
     }
 }
 
-impl From<anyhow::Error> for MemtestError {
-    fn from(err: anyhow::Error) -> MemtestError {
+impl<E: Error> From<anyhow::Error> for MemtestError<E> {
+    fn from(err: anyhow::Error) -> MemtestError<E> {
         MemtestError::Other(err)
     }
 }

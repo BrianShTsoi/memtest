@@ -66,7 +66,7 @@ pub struct MemtestReportList {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct MemtestReport {
     pub test_kind: MemtestKind,
-    pub outcome: Result<MemtestOutcome, MemtestError>,
+    pub outcome: Result<MemtestOutcome, MemtestError<TimeoutError>>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
@@ -103,6 +103,9 @@ struct TimeoutCheckerState {
     completed_iter: u64,
     checkpoint: u64,
 }
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TimeoutError;
 
 impl MemtestRunner {
     /// Create a MemtestRunner containing all test kinds in random order
@@ -193,7 +196,7 @@ impl MemtestRunner {
             };
 
             let test_result = if timed_out {
-                Err(MemtestError::Timeout)
+                Err(MemtestError::Observer(TimeoutError))
             } else if self.allow_multithread {
                 std::thread::scope(|scope| {
                     let num_threads = num_cpus::get();
@@ -217,7 +220,8 @@ impl MemtestRunner {
                             use {MemtestError::*, MemtestOutcome::*};
                             match (acc, result) {
                                 (Err(Other(e)), _) | (_, Err(Other(e))) => Err(Other(e)),
-                                (Err(Timeout), _) | (_, Err(Timeout)) => Err(Timeout),
+                                (Err(Observer(TimeoutError)), _)
+                                | (_, Err(Observer(TimeoutError))) => Err(Observer(TimeoutError)),
                                 (Ok(Fail(f)), _) | (_, Ok(Fail(f))) => Ok(Fail(f)),
                                 _ => Ok(Pass),
                             }
@@ -226,7 +230,7 @@ impl MemtestRunner {
             } else {
                 test(memory, TimeoutChecker::new(deadline))
             };
-            timed_out = matches!(test_result, Err(MemtestError::Timeout));
+            timed_out = matches!(test_result, Err(MemtestError::Observer(TimeoutError)));
 
             if matches!(test_result, Ok(MemtestOutcome::Fail(_))) && self.allow_early_termination {
                 reports.push(MemtestReport::new(*test_kind, test_result));
@@ -315,7 +319,10 @@ impl MemtestReportList {
 }
 
 impl MemtestReport {
-    fn new(test_kind: MemtestKind, outcome: Result<MemtestOutcome, MemtestError>) -> MemtestReport {
+    fn new(
+        test_kind: MemtestKind,
+        outcome: Result<MemtestOutcome, MemtestError<TimeoutError>>,
+    ) -> MemtestReport {
         MemtestReport { test_kind, outcome }
     }
 }
@@ -327,6 +334,10 @@ impl TimeoutChecker {
             state: None,
         }
     }
+}
+
+impl memtest::TestObserver for TimeoutChecker {
+    type Error = TimeoutError;
 
     /// Initialize TimeoutCheckerState
     /// This function should be called in the beginning of a memtest.
@@ -358,7 +369,7 @@ impl TimeoutChecker {
     // It is important to ensure that the "early return" hot path is inlined. This results in a
     // 100% improvement in performance.
     #[inline(always)]
-    fn check(&mut self) -> Result<(), MemtestError> {
+    fn check(&mut self) -> Result<(), Self::Error> {
         let state = self
             .state
             .as_mut()
@@ -374,10 +385,10 @@ impl TimeoutChecker {
 }
 
 impl TimeoutCheckerState {
-    fn on_checkpoint(&mut self, deadline: Instant) -> Result<(), MemtestError> {
+    fn on_checkpoint(&mut self, deadline: Instant) -> Result<(), TimeoutError> {
         let current_time = Instant::now();
         if current_time >= deadline {
-            return Err(MemtestError::Timeout);
+            return Err(TimeoutError);
         }
 
         self.trace_progress();
@@ -423,6 +434,14 @@ impl TimeoutCheckerState {
         self.checkpoint += iter_until_next_checkpoint;
     }
 }
+
+impl fmt::Display for TimeoutError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl Error for TimeoutError {}
 
 #[cfg(windows)]
 mod windows {
