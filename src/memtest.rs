@@ -6,7 +6,8 @@ use {
 };
 
 // TODO: Intend to convert this module to a standalone `no_std` crate
-// TODO: TimeoutChecker will be a trait instead
+
+pub type MemtestResult<O> = Result<MemtestOutcome, MemtestError<<O as TestObserver>::Error>>;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[must_use]
@@ -107,7 +108,7 @@ pub struct ParseMemtestKindError;
 pub fn test_own_address_basic<O: TestObserver>(
     memory: &mut [usize],
     mut observer: O,
-) -> Result<MemtestOutcome, MemtestError<O::Error>> {
+) -> MemtestResult<O> {
     let expected_iter = u64::try_from(memory.len())
         .ok()
         .and_then(|count| count.checked_mul(2))
@@ -144,7 +145,7 @@ pub fn test_own_address_basic<O: TestObserver>(
 pub fn test_own_address_repeat<O: TestObserver>(
     memory: &mut [usize],
     mut observer: O,
-) -> Result<MemtestOutcome, MemtestError<O::Error>> {
+) -> MemtestResult<O> {
     const NUM_RUNS: u64 = 16;
     let expected_iter = u64::try_from(memory.len())
         .ok()
@@ -193,7 +194,7 @@ pub fn test_own_address_repeat<O: TestObserver>(
 pub fn test_random_val<O: TestObserver>(
     memory: &mut [usize],
     mut observer: O,
-) -> Result<MemtestOutcome, MemtestError<O::Error>> {
+) -> MemtestResult<O> {
     let (first_half, second_half) = split_slice_in_half(memory)?;
     let expected_iter =
         u64::try_from(first_half.len() * 2).context("Total number of iterations overflowed")?;
@@ -216,7 +217,7 @@ pub fn test_random_val<O: TestObserver>(
 pub fn test_xor<O: TestObserver>(
     memory: &mut [usize],
     observer: O,
-) -> Result<MemtestOutcome, MemtestError<O::Error>> {
+) -> MemtestResult<O> {
     test_two_regions(memory, observer, std::ops::BitXor::bitxor)
 }
 
@@ -228,7 +229,7 @@ pub fn test_xor<O: TestObserver>(
 pub fn test_sub<O: TestObserver>(
     memory: &mut [usize],
     observer: O,
-) -> Result<MemtestOutcome, MemtestError<O::Error>> {
+) -> MemtestResult<O> {
     test_two_regions(memory, observer, usize::wrapping_sub)
 }
 
@@ -240,7 +241,7 @@ pub fn test_sub<O: TestObserver>(
 pub fn test_mul<O: TestObserver>(
     memory: &mut [usize],
     observer: O,
-) -> Result<MemtestOutcome, MemtestError<O::Error>> {
+) -> MemtestResult<O> {
     test_two_regions(memory, observer, usize::wrapping_mul)
 }
 
@@ -251,7 +252,7 @@ pub fn test_mul<O: TestObserver>(
 pub fn test_div<O: TestObserver>(
     memory: &mut [usize],
     observer: O,
-) -> Result<MemtestOutcome, MemtestError<O::Error>> {
+) -> MemtestResult<O> {
     test_two_regions(memory, observer, |n, d| n.wrapping_div(usize::max(d, 1)))
 }
 
@@ -262,7 +263,7 @@ pub fn test_div<O: TestObserver>(
 pub fn test_or<O: TestObserver>(
     memory: &mut [usize],
     observer: O,
-) -> Result<MemtestOutcome, MemtestError<O::Error>> {
+) -> MemtestResult<O> {
     test_two_regions(memory, observer, std::ops::BitOr::bitor)
 }
 
@@ -273,7 +274,7 @@ pub fn test_or<O: TestObserver>(
 pub fn test_and<O: TestObserver>(
     memory: &mut [usize],
     observer: O,
-) -> Result<MemtestOutcome, MemtestError<O::Error>> {
+) -> MemtestResult<O> {
     test_two_regions(memory, observer, std::ops::BitAnd::bitand)
 }
 
@@ -286,7 +287,7 @@ fn test_two_regions<O: TestObserver>(
     memory: &mut [usize],
     mut observer: O,
     transform_fn: fn(usize, usize) -> usize,
-) -> Result<MemtestOutcome, MemtestError<O::Error>> {
+) -> MemtestResult<O> {
     mem_reset(memory);
     let (first_half, second_half) = split_slice_in_half(memory)?;
     let expected_iter =
@@ -317,7 +318,7 @@ fn test_two_regions<O: TestObserver>(
 pub fn test_seq_inc<O: TestObserver>(
     memory: &mut [usize],
     mut observer: O,
-) -> Result<MemtestOutcome, MemtestError<O::Error>> {
+) -> MemtestResult<O> {
     let (first_half, second_half) = split_slice_in_half(memory)?;
     let expected_iter =
         u64::try_from(first_half.len() * 2).context("Total number of iterations overflowed")?;
@@ -342,7 +343,7 @@ pub fn test_seq_inc<O: TestObserver>(
 pub fn test_solid_bits<O: TestObserver>(
     memory: &mut [usize],
     mut observer: O,
-) -> Result<MemtestOutcome, MemtestError<O::Error>> {
+) -> MemtestResult<O> {
     const NUM_RUNS: u64 = 64;
     let (first_half, second_half) = split_slice_in_half(memory)?;
     let expected_iter = u64::try_from(first_half.len() * 2)
@@ -379,7 +380,7 @@ pub fn test_solid_bits<O: TestObserver>(
 pub fn test_checkerboard<O: TestObserver>(
     memory: &mut [usize],
     mut observer: O,
-) -> Result<MemtestOutcome, MemtestError<O::Error>> {
+) -> MemtestResult<O> {
     const NUM_RUNS: u64 = 64;
     let (first_half, second_half) = split_slice_in_half(memory)?;
     let expected_iter = u64::try_from(first_half.len() * 2)
@@ -416,7 +417,7 @@ pub fn test_checkerboard<O: TestObserver>(
 pub fn test_block_seq<O: TestObserver>(
     memory: &mut [usize],
     mut observer: O,
-) -> Result<MemtestOutcome, MemtestError<O::Error>> {
+) -> MemtestResult<O> {
     const NUM_RUNS: u64 = 256;
     let (first_half, second_half) = split_slice_in_half(memory)?;
     let expected_iter = u64::try_from(first_half.len() * 2)
@@ -466,7 +467,7 @@ const MOV_INV_ITERATIONS: u64 = 3;
 pub fn test_mov_inv_fixed_block<O: TestObserver>(
     memory: &mut [usize],
     mut observer: O,
-) -> Result<MemtestOutcome, MemtestError<O::Error>> {
+) -> MemtestResult<O> {
     let expected_iter = u64::try_from(memory.len())
         .ok()
         .and_then(|count| count.checked_mul(MOV_INV_ITERATIONS * 2))
@@ -491,7 +492,7 @@ pub fn test_mov_inv_fixed_block<O: TestObserver>(
 pub fn test_mov_inv_fixed_bit<O: TestObserver>(
     memory: &mut [usize],
     mut observer: O,
-) -> Result<MemtestOutcome, MemtestError<O::Error>> {
+) -> MemtestResult<O> {
     const NUM_RUNS: u64 = 8;
     let expected_iter = u64::try_from(memory.len())
         .ok()
@@ -522,7 +523,7 @@ pub fn test_mov_inv_fixed_bit<O: TestObserver>(
 pub fn test_mov_inv_fixed_random<O: TestObserver>(
     memory: &mut [usize],
     mut observer: O,
-) -> Result<MemtestOutcome, MemtestError<O::Error>> {
+) -> MemtestResult<O> {
     let expected_iter = u64::try_from(memory.len())
         .ok()
         .and_then(|count| count.checked_mul(MOV_INV_ITERATIONS * 2))
@@ -540,7 +541,7 @@ fn mov_inv_fixed_pattern<O: TestObserver>(
     memory: &mut [usize],
     pattern: usize,
     observer: &mut O,
-) -> Result<MemtestOutcome, MemtestError<O::Error>> {
+) -> MemtestResult<O> {
     for mem_ref in memory.iter_mut() {
         observer.check().map_err(|e| MemtestError::Observer(e))?;
         write_volatile_safe(mem_ref, pattern);
@@ -597,7 +598,7 @@ fn mov_inv_fixed_pattern<O: TestObserver>(
 pub fn test_mov_inv_walk<O: TestObserver>(
     memory: &mut [usize],
     mut observer: O,
-) -> Result<MemtestOutcome, MemtestError<O::Error>> {
+) -> MemtestResult<O> {
     const NUM_RUNS: usize = size_of::<usize>();
     let num_runs_u64 = u64::try_from(NUM_RUNS).unwrap();
     let expected_iter = u64::try_from(memory.len())
@@ -623,7 +624,7 @@ fn mov_inv_walking_pattern<O: TestObserver>(
     memory: &mut [usize],
     starting_pattern: usize,
     observer: &mut O,
-) -> Result<MemtestOutcome, MemtestError<O::Error>> {
+) -> MemtestResult<O> {
     let mut pattern = starting_pattern;
     for mem_ref in memory.iter_mut() {
         observer.check().map_err(|e| MemtestError::Observer(e))?;
@@ -681,7 +682,7 @@ fn mov_inv_walking_pattern<O: TestObserver>(
 pub fn test_mov_inv_random<O: TestObserver>(
     memory: &mut [usize],
     mut observer: O,
-) -> Result<MemtestOutcome, MemtestError<O::Error>> {
+) -> MemtestResult<O> {
     use {
         rand::{rngs::SmallRng, Rng, SeedableRng},
         std::time::Instant,
@@ -757,7 +758,7 @@ pub fn test_mov_inv_random<O: TestObserver>(
 pub fn test_modulo_20<O: TestObserver>(
     memory: &mut [usize],
     mut observer: O,
-) -> Result<MemtestOutcome, MemtestError<O::Error>> {
+) -> MemtestResult<O> {
     const STEP: usize = 20;
     (memory.len() > STEP)
         .then_some(())
@@ -842,7 +843,7 @@ fn compare_regions<O: TestObserver>(
     region1: &mut [usize],
     region2: &mut [usize],
     observer: &mut O,
-) -> Result<MemtestOutcome, MemtestError<O::Error>> {
+) -> MemtestResult<O> {
     for (ref1, ref2) in region1.iter().zip(region2.iter()) {
         observer.check().map_err(|e| MemtestError::Observer(e))?;
 

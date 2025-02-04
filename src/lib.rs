@@ -17,7 +17,7 @@ mod memtest;
 mod prelude;
 
 pub use memtest::{
-    MemtestError, MemtestFailure, MemtestKind, MemtestOutcome, ParseMemtestKindError,
+    MemtestError, MemtestFailure, MemtestKind, MemtestOutcome, MemtestResult, ParseMemtestKindError,
 };
 
 #[derive(Debug)]
@@ -66,7 +66,7 @@ pub struct MemtestReportList {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct MemtestReport {
     pub test_kind: MemtestKind,
-    pub outcome: Result<MemtestOutcome, MemtestError<TimeoutError>>,
+    pub outcome: MemtestResult<TimeoutChecker>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
@@ -91,7 +91,7 @@ struct MemLockGuard {
 
 /// A struct to ensure the test timeouts in a given duration
 #[derive(Debug)]
-struct TimeoutChecker {
+pub struct TimeoutChecker {
     deadline: Instant,
     state: Option<TimeoutCheckerState>,
 }
