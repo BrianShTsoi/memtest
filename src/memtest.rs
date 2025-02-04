@@ -191,10 +191,7 @@ pub fn test_own_address_repeat<O: TestObserver>(
 /// Split given memory into two halves and iterate through memory locations in pairs. For each
 /// pair, write a random value. After all locations are written, read and compare the two halves.
 #[tracing::instrument(skip_all)]
-pub fn test_random_val<O: TestObserver>(
-    memory: &mut [usize],
-    mut observer: O,
-) -> MemtestResult<O> {
+pub fn test_random_val<O: TestObserver>(memory: &mut [usize], mut observer: O) -> MemtestResult<O> {
     let (first_half, second_half) = split_slice_in_half(memory)?;
     let expected_iter =
         u64::try_from(first_half.len() * 2).context("Total number of iterations overflowed")?;
@@ -214,10 +211,7 @@ pub fn test_random_val<O: TestObserver>(
 /// memory locations in pairs. For each pair, write the XOR result of a random value and the value
 /// read from the location. After all locations are written, read and compare the two halves.
 #[tracing::instrument(skip_all)]
-pub fn test_xor<O: TestObserver>(
-    memory: &mut [usize],
-    observer: O,
-) -> MemtestResult<O> {
+pub fn test_xor<O: TestObserver>(memory: &mut [usize], observer: O) -> MemtestResult<O> {
     test_two_regions(memory, observer, std::ops::BitXor::bitxor)
 }
 
@@ -226,10 +220,7 @@ pub fn test_xor<O: TestObserver>(
 /// the value read from the location. After all locations are written, read and compare the two
 /// halves.
 #[tracing::instrument(skip_all)]
-pub fn test_sub<O: TestObserver>(
-    memory: &mut [usize],
-    observer: O,
-) -> MemtestResult<O> {
+pub fn test_sub<O: TestObserver>(memory: &mut [usize], observer: O) -> MemtestResult<O> {
     test_two_regions(memory, observer, usize::wrapping_sub)
 }
 
@@ -238,10 +229,7 @@ pub fn test_sub<O: TestObserver>(
 /// the value read from the location. After all locations are written, read and compare the two
 /// halves.
 #[tracing::instrument(skip_all)]
-pub fn test_mul<O: TestObserver>(
-    memory: &mut [usize],
-    observer: O,
-) -> MemtestResult<O> {
+pub fn test_mul<O: TestObserver>(memory: &mut [usize], observer: O) -> MemtestResult<O> {
     test_two_regions(memory, observer, usize::wrapping_mul)
 }
 
@@ -249,10 +237,7 @@ pub fn test_mul<O: TestObserver>(
 /// memory locations in pairs. For each pair, write the result of dividing the value read from the
 /// location with a random value. After all locations are written, read and compare the two halves.
 #[tracing::instrument(skip_all)]
-pub fn test_div<O: TestObserver>(
-    memory: &mut [usize],
-    observer: O,
-) -> MemtestResult<O> {
+pub fn test_div<O: TestObserver>(memory: &mut [usize], observer: O) -> MemtestResult<O> {
     test_two_regions(memory, observer, |n, d| n.wrapping_div(usize::max(d, 1)))
 }
 
@@ -260,10 +245,7 @@ pub fn test_div<O: TestObserver>(
 /// memory locations in pairs. For each pair, write the OR result of a random value and the value
 /// read from the location. After all locations are written, read and compare the two halves.
 #[tracing::instrument(skip_all)]
-pub fn test_or<O: TestObserver>(
-    memory: &mut [usize],
-    observer: O,
-) -> MemtestResult<O> {
+pub fn test_or<O: TestObserver>(memory: &mut [usize], observer: O) -> MemtestResult<O> {
     test_two_regions(memory, observer, std::ops::BitOr::bitor)
 }
 
@@ -271,10 +253,7 @@ pub fn test_or<O: TestObserver>(
 /// memory locations in pairs. For each pair, write the AND result of a random value and the value
 /// read from the location. After all locations are written, read and compare the two halves.
 #[tracing::instrument(skip_all)]
-pub fn test_and<O: TestObserver>(
-    memory: &mut [usize],
-    observer: O,
-) -> MemtestResult<O> {
+pub fn test_and<O: TestObserver>(memory: &mut [usize], observer: O) -> MemtestResult<O> {
     test_two_regions(memory, observer, std::ops::BitAnd::bitand)
 }
 
@@ -315,10 +294,7 @@ fn test_two_regions<O: TestObserver>(
 /// random value at the start. For each pair, write the result of adding the random value and the
 /// index of iteration. After all locations are written, read and compare the two halves.
 #[tracing::instrument(skip_all)]
-pub fn test_seq_inc<O: TestObserver>(
-    memory: &mut [usize],
-    mut observer: O,
-) -> MemtestResult<O> {
+pub fn test_seq_inc<O: TestObserver>(memory: &mut [usize], mut observer: O) -> MemtestResult<O> {
     let (first_half, second_half) = split_slice_in_half(memory)?;
     let expected_iter =
         u64::try_from(first_half.len() * 2).context("Total number of iterations overflowed")?;
@@ -340,10 +316,7 @@ pub fn test_seq_inc<O: TestObserver>(
 /// After all locations are written, read and compare the two halves.
 /// This procedure is repeated 64 times.
 #[tracing::instrument(skip_all)]
-pub fn test_solid_bits<O: TestObserver>(
-    memory: &mut [usize],
-    mut observer: O,
-) -> MemtestResult<O> {
+pub fn test_solid_bits<O: TestObserver>(memory: &mut [usize], mut observer: O) -> MemtestResult<O> {
     const NUM_RUNS: u64 = 64;
     let (first_half, second_half) = split_slice_in_half(memory)?;
     let expected_iter = u64::try_from(first_half.len() * 2)
@@ -414,10 +387,7 @@ pub fn test_checkerboard<O: TestObserver>(
 /// halves.
 /// This procedure is repeated 256 times, with i corresponding to the iteration number 0-255.
 #[tracing::instrument(skip_all)]
-pub fn test_block_seq<O: TestObserver>(
-    memory: &mut [usize],
-    mut observer: O,
-) -> MemtestResult<O> {
+pub fn test_block_seq<O: TestObserver>(memory: &mut [usize], mut observer: O) -> MemtestResult<O> {
     const NUM_RUNS: u64 = 256;
     let (first_half, second_half) = split_slice_in_half(memory)?;
     let expected_iter = u64::try_from(first_half.len() * 2)
@@ -755,10 +725,7 @@ pub fn test_mov_inv_random<O: TestObserver>(
 /// stored in every 20th location is unchanged.
 /// The procedure is repeated with offsets 0-19 to test all memory locations.
 #[tracing::instrument(skip_all)]
-pub fn test_modulo_20<O: TestObserver>(
-    memory: &mut [usize],
-    mut observer: O,
-) -> MemtestResult<O> {
+pub fn test_modulo_20<O: TestObserver>(memory: &mut [usize], mut observer: O) -> MemtestResult<O> {
     const STEP: usize = 20;
     (memory.len() > STEP)
         .then_some(())
