@@ -193,6 +193,12 @@ impl MemtestRunner {
                 MemtestKind::SolidBits => memtest::test_solid_bits,
                 MemtestKind::Checkerboard => memtest::test_checkerboard,
                 MemtestKind::BlockSeq => memtest::test_block_seq,
+                MemtestKind::MovInvFixedBlock => memtest::test_mov_inv_fixed_block,
+                MemtestKind::MovInvFixedBit => memtest::test_mov_inv_fixed_bit,
+                MemtestKind::MovInvFixedRandom => memtest::test_mov_inv_fixed_random,
+                MemtestKind::MovInvWalk => memtest::test_mov_inv_walk,
+                MemtestKind::MovInvRandom => memtest::test_mov_inv_random,
+                MemtestKind::Modulo20 => memtest::test_modulo_20,
             };
 
             let test_result = if timed_out {

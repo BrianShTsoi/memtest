@@ -90,6 +90,12 @@ memtest_kinds! {
     SolidBits,
     Checkerboard,
     BlockSeq,
+    MovInvFixedBlock,
+    MovInvFixedBit,
+    MovInvFixedRandom,
+    MovInvWalk,
+    MovInvRandom,
+    Modulo20,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -357,10 +363,8 @@ pub fn test_solid_bits<O: TestObserver>(
             write_volatile_safe(second_ref, val);
         }
 
-        if let MemtestOutcome::Fail(failure) =
-            compare_regions(first_half, second_half, &mut observer)?
-        {
-            return Ok(MemtestOutcome::Fail(failure));
+        if let MemtestOutcome::Fail(f) = compare_regions(first_half, second_half, &mut observer)? {
+            return Ok(MemtestOutcome::Fail(f));
         }
     }
     Ok(MemtestOutcome::Pass)
@@ -397,10 +401,8 @@ pub fn test_checkerboard<O: TestObserver>(
             write_volatile_safe(second_ref, val);
         }
 
-        if let MemtestOutcome::Fail(failure) =
-            compare_regions(first_half, second_half, &mut observer)?
-        {
-            return Ok(MemtestOutcome::Fail(failure));
+        if let MemtestOutcome::Fail(f) = compare_regions(first_half, second_half, &mut observer)? {
+            return Ok(MemtestOutcome::Fail(f));
         }
     }
     Ok(MemtestOutcome::Pass)
@@ -432,12 +434,374 @@ pub fn test_block_seq<O: TestObserver>(
             write_volatile_safe(second_ref, val);
         }
 
-        if let MemtestOutcome::Fail(failure) =
-            compare_regions(first_half, second_half, &mut observer)?
-        {
-            return Ok(MemtestOutcome::Fail(failure));
+        if let MemtestOutcome::Fail(f) = compare_regions(first_half, second_half, &mut observer)? {
+            return Ok(MemtestOutcome::Fail(f));
         }
     }
+    Ok(MemtestOutcome::Pass)
+}
+
+// Each call to the moving inversion algorithm iterates through the memory 3 times
+const MOV_INV_ITERATIONS: u64 = 3;
+
+/// This test adapts the moving inversion algorithm implemented by [memtest86+](https://github.com/
+/// memtest86plus/memtest86plus). As described in the the [Memtest86+ Test Algorithm Section](https://github.com/
+/// memtest86plus/memtest86plus?tab=readme-ov-file#memtest86-test-algorithms),
+///
+/// "The moving inversion tests work as follows:
+/// 1. Fill memory with a pattern
+/// 2. Starting at the lowest address
+///     i. check that the pattern has not changed
+///     ii. write the pattern's complement
+///     iii. increment the address
+///     iv. repeat 2.1 to 2.3
+/// 3. Starting at the highest address
+///     i. check that the pattern has not changed
+///     ii. write the pattern's complement
+///     iii. decrement the address
+///     iv. repeat 3.1 to 3.3 "
+///
+/// This test runs the moving inversion algorithm with fixed patterns of all bits as 1s or 0s.
+#[tracing::instrument(skip_all)]
+pub fn test_mov_inv_fixed_block<O: TestObserver>(
+    memory: &mut [usize],
+    mut observer: O,
+) -> Result<MemtestOutcome, MemtestError<O::Error>> {
+    let expected_iter = u64::try_from(memory.len())
+        .ok()
+        .and_then(|count| count.checked_mul(MOV_INV_ITERATIONS * 2))
+        .context("Total number of iterations overflowed")?;
+    observer.init(expected_iter);
+
+    if let MemtestOutcome::Fail(f) = mov_inv_fixed_pattern(memory, 0, &mut observer)? {
+        return Ok(MemtestOutcome::Fail(f));
+    }
+    mov_inv_fixed_pattern(memory, !0, &mut observer)
+}
+
+/// This test adapts the moving inversion algorithm implemented by [memtest86+](https://github.com/
+/// memtest86plus/memtest86plus). For a detailed explanation of the algorithm, please refer
+/// to the description available at the [Memtest86+ Test Algorithm Section](https://github.com/
+/// memtest86plus/memtest86plus?tab=readme-ov-file#memtest86-test-algorithms)
+///
+/// This test runs the moving inversion algorithm with fixed 8-bit patterns where 1 bit is 1/0 and the
+/// other 7 bits are 0/1s.  The procedure is repeated 8 times with the pattern rotated by 1 bit each
+/// time to test all bits in a byte.
+#[tracing::instrument(skip_all)]
+pub fn test_mov_inv_fixed_bit<O: TestObserver>(
+    memory: &mut [usize],
+    mut observer: O,
+) -> Result<MemtestOutcome, MemtestError<O::Error>> {
+    const NUM_RUNS: u64 = 8;
+    let expected_iter = u64::try_from(memory.len())
+        .ok()
+        .and_then(|count| count.checked_mul(MOV_INV_ITERATIONS * 2 * NUM_RUNS))
+        .context("Total number of iterations overflowed")?;
+    observer.init(expected_iter);
+
+    let mut pattern = usize_filled_from_byte(0x10);
+    for _ in 0..=(u8::try_from(NUM_RUNS - 1).unwrap()) {
+        if let MemtestOutcome::Fail(f) = mov_inv_fixed_pattern(memory, pattern, &mut observer)? {
+            return Ok(MemtestOutcome::Fail(f));
+        }
+        if let MemtestOutcome::Fail(f) = mov_inv_fixed_pattern(memory, !pattern, &mut observer)? {
+            return Ok(MemtestOutcome::Fail(f));
+        }
+        pattern = pattern.rotate_right(1);
+    }
+    Ok(MemtestOutcome::Pass)
+}
+
+/// This test adapts the moving inversion algorithm implemented by [memtest86+](https://github.com/
+/// memtest86plus/memtest86plus). For a detailed explanation of the algorithm, please refer
+/// to the description available at the [Memtest86+ Test Algorithm Section](https://github.com/
+/// memtest86plus/memtest86plus?tab=readme-ov-file#memtest86-test-algorithms)
+///
+/// This test runs the moving inversion algorithm with random fixed patterns.
+#[tracing::instrument(skip_all)]
+pub fn test_mov_inv_fixed_random<O: TestObserver>(
+    memory: &mut [usize],
+    mut observer: O,
+) -> Result<MemtestOutcome, MemtestError<O::Error>> {
+    let expected_iter = u64::try_from(memory.len())
+        .ok()
+        .and_then(|count| count.checked_mul(MOV_INV_ITERATIONS * 2))
+        .context("Total number of iterations overflowed")?;
+    observer.init(expected_iter);
+
+    let pattern = random();
+    if let MemtestOutcome::Fail(f) = mov_inv_fixed_pattern(memory, pattern, &mut observer)? {
+        return Ok(MemtestOutcome::Fail(f));
+    }
+    mov_inv_fixed_pattern(memory, !pattern, &mut observer)
+}
+
+fn mov_inv_fixed_pattern<O: TestObserver>(
+    memory: &mut [usize],
+    pattern: usize,
+    observer: &mut O,
+) -> Result<MemtestOutcome, MemtestError<O::Error>> {
+    for mem_ref in memory.iter_mut() {
+        observer.check().map_err(|e| MemtestError::Observer(e))?;
+        write_volatile_safe(mem_ref, pattern);
+    }
+
+    for mem_ref in memory.iter_mut() {
+        observer.check().map_err(|e| MemtestError::Observer(e))?;
+        let address = address_from_ref(mem_ref);
+        let actual = read_volatile_safe(mem_ref);
+
+        if actual != pattern {
+            info!("Test failed at 0x{address:x}");
+            return Ok(MemtestOutcome::Fail(MemtestFailure::UnexpectedValue {
+                address,
+                expected: pattern,
+                actual,
+            }));
+        }
+
+        write_volatile_safe(mem_ref, !pattern);
+    }
+
+    for mem_ref in memory.iter_mut().rev() {
+        observer.check().map_err(|e| MemtestError::Observer(e))?;
+        let address = address_from_ref(mem_ref);
+        let actual = read_volatile_safe(mem_ref);
+
+        if actual != !pattern {
+            info!("Test failed at 0x{address:x}");
+            return Ok(MemtestOutcome::Fail(MemtestFailure::UnexpectedValue {
+                address,
+                expected: !pattern,
+                actual,
+            }));
+        }
+
+        write_volatile_safe(mem_ref, pattern);
+    }
+
+    Ok(MemtestOutcome::Pass)
+}
+
+/// This test adapts the moving inversion algorithm implemented by [memtest86+](https://github.com/
+/// memtest86plus/memtest86plus). For a detailed explanation of the algorithm, please refer
+/// to the description available at the [Memtest86+ Test Algorithm Section](https://github.com/
+/// memtest86plus/memtest86plus?tab=readme-ov-file#memtest86-test-algorithms)
+///
+/// This test runs the moving inversion algorithm with a "walking" bit pattern. The algorithm starts
+/// with 0x1 (or the compliment of 0x1) and "walks" the bit by shifting left for every new memory
+/// location.
+/// The procedure is repeated with offsets 0-31 or 0-63 depending on the size of `usize` to test all
+/// bits in a memory location.
+#[tracing::instrument(skip_all)]
+pub fn test_mov_inv_walk<O: TestObserver>(
+    memory: &mut [usize],
+    mut observer: O,
+) -> Result<MemtestOutcome, MemtestError<O::Error>> {
+    const NUM_RUNS: usize = size_of::<usize>();
+    let num_runs_u64 = u64::try_from(NUM_RUNS).unwrap();
+    let expected_iter = u64::try_from(memory.len())
+        .ok()
+        .and_then(|count| count.checked_mul(MOV_INV_ITERATIONS * 2 * num_runs_u64))
+        .context("Total number of iterations overflowed")?;
+    observer.init(expected_iter);
+
+    for i in 0..num_runs_u64 {
+        let pattern = 1 << i;
+        if let MemtestOutcome::Fail(f) = mov_inv_walking_pattern(memory, pattern, &mut observer)? {
+            return Ok(MemtestOutcome::Fail(f));
+        }
+        if let MemtestOutcome::Fail(f) = mov_inv_walking_pattern(memory, !(pattern), &mut observer)?
+        {
+            return Ok(MemtestOutcome::Fail(f));
+        }
+    }
+    Ok(MemtestOutcome::Pass)
+}
+
+fn mov_inv_walking_pattern<O: TestObserver>(
+    memory: &mut [usize],
+    starting_pattern: usize,
+    observer: &mut O,
+) -> Result<MemtestOutcome, MemtestError<O::Error>> {
+    let mut pattern = starting_pattern;
+    for mem_ref in memory.iter_mut() {
+        observer.check().map_err(|e| MemtestError::Observer(e))?;
+        write_volatile_safe(mem_ref, pattern);
+        pattern = pattern.rotate_left(1);
+    }
+
+    pattern = starting_pattern;
+    for mem_ref in memory.iter_mut() {
+        observer.check().map_err(|e| MemtestError::Observer(e))?;
+        let address = address_from_ref(mem_ref);
+        let actual = read_volatile_safe(mem_ref);
+
+        if actual != pattern {
+            info!("Test failed at 0x{address:x}");
+            return Ok(MemtestOutcome::Fail(MemtestFailure::UnexpectedValue {
+                address,
+                expected: pattern,
+                actual,
+            }));
+        }
+
+        write_volatile_safe(mem_ref, !pattern);
+        pattern = pattern.rotate_left(1);
+    }
+
+    pattern = !pattern;
+    for mem_ref in memory.iter_mut().rev() {
+        observer.check().map_err(|e| MemtestError::Observer(e))?;
+        pattern = pattern.rotate_right(1);
+        let address = address_from_ref(mem_ref);
+        let actual = read_volatile_safe(mem_ref);
+
+        if actual != pattern {
+            info!("Test failed at 0x{address:x}");
+            return Ok(MemtestOutcome::Fail(MemtestFailure::UnexpectedValue {
+                address,
+                expected: pattern,
+                actual,
+            }));
+        }
+
+        write_volatile_safe(mem_ref, !pattern);
+    }
+    Ok(MemtestOutcome::Pass)
+}
+
+/// This test adapts the moving inversion algorithm implemented by [memtest86+](https://github.com/
+/// memtest86plus/memtest86plus). For a detailed explanation of the algorithm, please refer
+/// to the description available at the [Memtest86+ Test Algorithm Section](https://github.com/
+/// memtest86plus/memtest86plus?tab=readme-ov-file#memtest86-test-algorithms)
+///
+/// This test runs the moving inversion algorithm with a random pattern for every memory location.
+#[tracing::instrument(skip_all)]
+pub fn test_mov_inv_random<O: TestObserver>(
+    memory: &mut [usize],
+    mut observer: O,
+) -> Result<MemtestOutcome, MemtestError<O::Error>> {
+    use {
+        rand::{rngs::SmallRng, Rng, SeedableRng},
+        std::time::Instant,
+    };
+    let expected_iter = u64::try_from(memory.len())
+        .ok()
+        .and_then(|count| count.checked_mul(MOV_INV_ITERATIONS * 2))
+        .context("Total number of iterations overflowed")?;
+    observer.init(expected_iter);
+    let seed = {
+        let time_bytes = Instant::now().elapsed().as_nanos().to_le_bytes();
+        let mut seed = [0; 32];
+        seed[0..16].copy_from_slice(&time_bytes);
+        seed[16..32].copy_from_slice(&time_bytes);
+        seed
+    };
+
+    let mut rng = SmallRng::from_seed(seed);
+    for mem_ref in memory.iter_mut() {
+        observer.check().map_err(|e| MemtestError::Observer(e))?;
+        write_volatile_safe(mem_ref, rng.gen());
+    }
+
+    let mut rng = SmallRng::from_seed(seed);
+    for mem_ref in memory.iter_mut() {
+        observer.check().map_err(|e| MemtestError::Observer(e))?;
+        let address = address_from_ref(mem_ref);
+        let expected = rng.gen();
+        let actual = read_volatile_safe(mem_ref);
+
+        if actual != expected {
+            info!("Test failed at 0x{address:x}");
+            return Ok(MemtestOutcome::Fail(MemtestFailure::UnexpectedValue {
+                address,
+                expected,
+                actual,
+            }));
+        }
+
+        write_volatile_safe(mem_ref, !expected);
+    }
+
+    let mut rng = SmallRng::from_seed(seed);
+    for mem_ref in memory.iter_mut() {
+        observer.check().map_err(|e| MemtestError::Observer(e))?;
+        let address = address_from_ref(mem_ref);
+        let expected = !rng.gen::<usize>();
+        let actual = read_volatile_safe(mem_ref);
+
+        if actual != expected {
+            info!("Test failed at 0x{address:x}");
+            return Ok(MemtestOutcome::Fail(MemtestFailure::UnexpectedValue {
+                address,
+                expected,
+                actual,
+            }));
+        }
+
+        write_volatile_safe(mem_ref, !expected);
+    }
+
+    Ok(MemtestOutcome::Pass)
+}
+
+/// This test uses the Modulo-20 algorithm implemented by [memtest86+](https://github.com/
+/// memtest86plus/memtest86plus),  which is designed to avoid effects of caching and buffering.
+///
+/// The test generates a random value, then write the value to every 20th memory location.
+/// Afterwards write the complement of the value to all other locations. Then verify that the values
+/// stored in every 20th location is unchanged.
+/// The procedure is repeated with offsets 0-19 to test all memory locations.
+#[tracing::instrument(skip_all)]
+pub fn test_modulo_20<O: TestObserver>(
+    memory: &mut [usize],
+    mut observer: O,
+) -> Result<MemtestOutcome, MemtestError<O::Error>> {
+    const STEP: usize = 20;
+    (memory.len() > STEP)
+        .then_some(())
+        .context("Insufficient memory length for two-regions memtest")?;
+    let expected_iter = u64::try_from(memory.len())
+        .ok()
+        .and_then(|count| count.checked_mul((STEP * 2).try_into().unwrap()))
+        .context("Total number of iterations overflowed")?;
+    observer.init(expected_iter);
+
+    let pattern = random();
+    for offset in 0..STEP {
+        for mem_ref in memory.iter_mut().skip(offset).step_by(STEP) {
+            observer.check().map_err(|e| MemtestError::Observer(e))?;
+            write_volatile_safe(mem_ref, pattern);
+        }
+
+        for _ in 0..2 {
+            for (i, mem_ref) in memory.iter_mut().enumerate() {
+                if i % STEP == offset {
+                    continue;
+                }
+                observer.check().map_err(|e| MemtestError::Observer(e))?;
+                write_volatile_safe(mem_ref, !pattern);
+            }
+        }
+
+        for mem_ref in memory.iter().skip(offset).step_by(STEP) {
+            observer.check().map_err(|e| MemtestError::Observer(e))?;
+            let address = address_from_ref(mem_ref);
+            let expected = pattern;
+            let actual = read_volatile_safe(mem_ref);
+
+            if actual != expected {
+                info!("Test failed at 0x{address:x}");
+                return Ok(MemtestOutcome::Fail(MemtestFailure::UnexpectedValue {
+                    address,
+                    expected,
+                    actual,
+                }));
+            }
+        }
+    }
+
     Ok(MemtestOutcome::Pass)
 }
 
